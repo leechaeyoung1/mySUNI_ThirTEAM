@@ -16,6 +16,9 @@ from io import BytesIO
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
+processing_done = None
+result_df = None
+
 
 # Flask 설정
 app = Flask(__name__)
@@ -501,4 +504,5 @@ def upload():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 
