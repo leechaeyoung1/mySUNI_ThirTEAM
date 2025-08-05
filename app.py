@@ -368,32 +368,55 @@ def generate_remark_keyword_trend(df):
 
 
 # 메인 페이지(index.html)를 렌더링하며 전체 시각화 결과를 준비
-@app.route("/", methods=["GET"])
+@app.route("/", methods=["GET", "POST"])
 def index():
+    global processing_done, result_df
     print("✅ index() 진입")
 
-    df = None
-    kpis = {"defect_rate": "-", "production_qty": "-", "energy_usage": "-"}
-    production_html = defect_html = energy_html = None
-    spc_elec_img = spc_gas_img = None
-    spc_by_line_html = spc_by_line_gas_html = None
-    anova_results = None
+    # ✅ POST 요청 (파일 업로드)
+    if request.method == "POST":
+        files = request.files.getlist("files")
+        for file in files:
+            if file and file.filename.endswith(".csv") and not file.filename.startswith("~$"):
+                save_path = os.path.join(UPLOAD_FOLDER, file.filename)
+                file.save(save_path)
+                print(f"✔ 저장됨: {file.filename}")
 
-    remark_top5 = []
-    energy_trend_elec = ""
-    energy_trend_gas = ""
-    produced_chart_html = ""
-    defect_chart_html = ""
-    remark_keyword_chart_html = ""
-    keyword_trend_html = {}
+        # ✅ 백그라운드 전처리 시작
+        if processing_done is False:
+            print("⚙️ 백그라운드 전처리 시작")
+            processing_done = None
+            thread = threading.Thread(target=background_preprocessing)
+            thread.start()
 
-    if os.path.exists(RESULT_PATH):
+        return render_template("loading.html")  # 즉시 응답!
+
+    # ✅ result.csv 존재 여부로 페이지 분기
+    if not os.path.exists(RESULT_PATH):
+        print("📭 result.csv 없음 → 대기 페이지")
+        return render_template("waiting.html")
+
+    # ✅ 전처리 완료 후 → 데이터 및 시각화
+    if processing_done is True and result_df is not None:
+        print("📈 전처리 완료 → 대시보드 렌더링")
+
+        df = result_df
+        kpis = {"defect_rate": "-", "production_qty": "-", "energy_usage": "-"}
+        production_html = defect_html = energy_html = None
+        spc_elec_img = spc_gas_img = None
+        spc_by_line_html = spc_by_line_gas_html = None
+        anova_results = None
+
+        remark_top5 = []
+        energy_trend_elec = ""
+        energy_trend_gas = ""
+        produced_chart_html = ""
+        defect_chart_html = ""
+        remark_keyword_chart_html = ""
+        keyword_trend_html = {}
+
         try:
-            print("📂 result.csv 존재 확인됨")
-            df = pd.read_csv(RESULT_PATH)
-            print("✅ CSV 로딩 성공")
             kpis = calculate_kpis(df)
-
             production_html = get_production_trend(df)
             defect_html = get_defect_rate_distribution(df)
             energy_html = get_energy_usage_chart(df)
@@ -417,28 +440,42 @@ def index():
             print("❌ CSV 로드 또는 그래프 생성 오류:", e)
             flash("❌ CSV 불러오기 또는 그래프 생성 중 오류 발생")
 
-    return render_template(
-        "index.html",
-        table=df.head().to_html(index=False) if df is not None else None,
-        data=df.head(5).to_csv(index=False) if df is not None else None,
-        kpis=kpis,
-        production_chart=production_html,
-        defect_chart=defect_html,
-        energy_chart=energy_html,
-        spc_elec=spc_elec_img,
-        spc_gas=spc_gas_img,
-        spc_by_line=spc_by_line_html,
-        spc_by_line_gas=spc_by_line_gas_html,
-        anova_results=anova_results,
-        remark_top5=remark_top5,
-        energy_trend_elec=energy_trend_elec,
-        energy_trend_gas=energy_trend_gas,
-        produced_chart=produced_chart_html,
-        defect_bar_chart=defect_chart_html,
-        remark_keyword_chart=remark_keyword_chart_html,
-        keyword_trend_html=keyword_trend_html,
-        keyword_graphs=bool(keyword_trend_html)
-    )
+        return render_template(
+            "index.html",
+            table=df.head().to_html(index=False) if df is not None else None,
+            data=df.head(5).to_csv(index=False) if df is not None else None,
+            kpis=kpis,
+            production_chart=production_html,
+            defect_chart=defect_html,
+            energy_chart=energy_html,
+            spc_elec=spc_elec_img,
+            spc_gas=spc_gas_img,
+            spc_by_line=spc_by_line_html,
+            spc_by_line_gas=spc_by_line_gas_html,
+            anova_results=anova_results,
+            remark_top5=remark_top5,
+            energy_trend_elec=energy_trend_elec,
+            energy_trend_gas=energy_trend_gas,
+            produced_chart=produced_chart_html,
+            defect_bar_chart=defect_chart_html,
+            remark_keyword_chart=remark_keyword_chart_html,
+            keyword_trend_html=keyword_trend_html,
+            keyword_graphs=bool(keyword_trend_html)
+        )
+
+    # ✅ 아직 처리 중이면 → 대기
+    if processing_done is None:
+        print("⏳ 전처리 진행 중 → waiting 유지")
+        return render_template("waiting.html")
+
+    return render_template("index.html")  # 기본 fallback
+
+
+@app.route("/status")
+def status():
+    global processing_done
+    return jsonify({"done": processing_done is True})
+
 
 # 업로드된 여러 CSV 파일 저장 → 전처리(run_preprocessing) 수행 → result.csv 생성
 @app.route("/upload", methods=["POST"])
@@ -464,3 +501,4 @@ def upload():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
